@@ -1,12 +1,18 @@
 // Baby Health Widget
-// Reads local records created by Baby Health Entry.js.
+// Reads shared event files created by Baby Health Entry.js.
 
-const DATA_FILE = "BabyHealthData.json";
+const storage = importModule("Baby Health Storage");
+let data = [];
+let setupError = null;
 
-const fm = FileManager.local();
-const dataPath = fm.joinPath(fm.documentsDirectory(), DATA_FILE);
-const data = readData();
-const widget = createWidget(data);
+try {
+  await storage.migrateLegacyData();
+  data = await storage.loadEvents();
+} catch (error) {
+  setupError = error.message;
+}
+
+const widget = createWidget(data, setupError);
 
 // iOS controls the actual schedule, but this gives it a reasonable refresh hint.
 widget.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
@@ -14,22 +20,21 @@ widget.url = "scriptable:///run?scriptName=Baby%20Health%20Dashboard";
 Script.setWidget(widget);
 Script.complete();
 
-function readData() {
-  if (!fm.fileExists(dataPath)) {
-    return { version: 1, feeds: [], bottles: [], medications: [] };
-  }
-
-  try {
-    return JSON.parse(fm.readString(dataPath));
-  } catch (error) {
-    return { version: 1, feeds: [], bottles: [], medications: [] };
-  }
-}
-
-function createWidget(data) {
+function createWidget(data, setupError) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color("#17212B");
   widget.setPadding(16, 16, 14, 16);
+
+  if (setupError) {
+    const errorText = widget.addText("Shared folder not set up");
+    errorText.font = Font.boldSystemFont(15);
+    errorText.textColor = new Color("#F7D794");
+    widget.addSpacer(8);
+    const details = widget.addText("Open Baby Health Entry for setup instructions.");
+    details.font = Font.systemFont(11);
+    details.textColor = new Color("#C7D4DC");
+    return widget;
+  }
 
   const latestFeeding = latestFeedingRecord(data);
   if (latestFeeding) {
@@ -60,13 +65,13 @@ function createWidget(data) {
   medicationHeader.font = Font.boldSystemFont(9);
   medicationHeader.textColor = new Color("#8FA8B8");
 
-  const recentMedication = latest(data.medications);
+  const recentMedication = latest(data.filter((event) => event.type === "medication"));
   if (recentMedication) {
     const medication = widget.addText(`${recentMedication.name} · ${recentMedication.dose} ${recentMedication.unit}`.trim());
     medication.font = Font.boldSystemFont(13);
     medication.textColor = new Color("#B8E0D2");
 
-    const medicationTime = widget.addText(formatTime(recentMedication.takenAt));
+    const medicationTime = widget.addText(formatTime(recentMedication.date));
     medicationTime.font = Font.systemFont(11);
     medicationTime.textColor = new Color("#C7D4DC");
   } else {
@@ -85,21 +90,19 @@ function createWidget(data) {
 
 function latest(records) {
   return records
-    .filter((record) => record && (record.startedAt || record.takenAt))
-    .sort((a, b) => new Date(b.startedAt || b.takenAt) - new Date(a.startedAt || a.takenAt))[0];
+    .filter((record) => record && record.date)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
 }
 
-function latestFeedingRecord(data) {
-  const breastfeedings = (data.feeds || []).map((record) => ({ type: "breast", record, date: record.startedAt }));
-  const bottles = (data.bottles || []).map((record) => ({ type: "bottle", record, date: record.fedAt }));
-  return latest([...breastfeedings, ...bottles].map((item) => ({ ...item, startedAt: item.date })));
+function latestFeedingRecord(events) {
+  return latest(events.filter((event) => event.type === "breastfeeding" || event.type === "bottle"));
 }
 
 function feedingSummary(item) {
   if (item.type === "bottle") {
-    return `Bottle · ${item.record.amount} ${item.record.unit}`.trim();
+    return `Bottle · ${item.amount} ${item.unit}`.trim();
   }
-  return `${capitalize(item.record.side)} · ${item.record.durationMinutes} min`;
+  return `${capitalize(item.side)} · ${item.durationMinutes} min`;
 }
 
 function relativeTime(value) {

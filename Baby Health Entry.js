@@ -1,18 +1,29 @@
 // Baby Health Entry
-// Run this script inside Scriptable to record and review local events.
+// Run this script inside Scriptable to record and review shared events.
 
-const DATA_FILE = "BabyHealthData.json";
-const fm = FileManager.local();
-const dataPath = fm.joinPath(fm.documentsDirectory(), DATA_FILE);
+const storage = importModule("Baby Health Storage");
+let data = [];
+let setupError = null;
 
-let data = readData();
+try {
+  await storage.migrateLegacyData();
+  data = await storage.loadEvents();
+} catch (error) {
+  setupError = error.message;
+}
+
 await mainMenu();
 Script.complete();
 
 async function mainMenu() {
+  if (setupError) {
+    await showMessage("Shared folder setup needed", `${setupError}\n\nCreate the File Bookmark described in the README, then run this script again.`);
+    return;
+  }
+
   const alert = new Alert();
   alert.title = "Baby health";
-  alert.message = `${data.feeds.length} breastfeeds · ${data.bottles.length} bottles · ${data.medications.length} medications recorded`;
+  alert.message = `${data.filter((event) => event.type === "breastfeeding").length} breastfeeds · ${data.filter((event) => event.type === "bottle").length} bottles · ${data.filter((event) => event.type === "medication").length} medications recorded`;
   alert.addAction("Log breastfeeding");
   alert.addAction("Log bottle feeding");
   alert.addAction("Log medication");
@@ -57,14 +68,14 @@ async function logFeed() {
   const notes = await askText("Notes", "Optional", "");
   if (notes === null) return;
 
-  data.feeds.push({
+  addEvent({
     id: createId("feed"),
-    startedAt: startedAt.toISOString(),
+    type: "breastfeeding",
+    date: startedAt.toISOString(),
     durationMinutes: Math.round(durationMinutes),
     side: ["left", "right", "both"][sideChoice],
     notes
   });
-  saveData();
   await showMessage("Saved", "Breastfeeding record added.");
 }
 
@@ -88,15 +99,15 @@ async function logMedication() {
   const notes = await askText("Notes", "Optional", "");
   if (notes === null) return;
 
-  data.medications.push({
+  addEvent({
     id: createId("medication"),
+    type: "medication",
     name: name.trim(),
-    takenAt: takenAt.toISOString(),
+    date: takenAt.toISOString(),
     dose: dose.trim(),
     unit: unit.trim(),
     notes
   });
-  saveData();
   await showMessage("Saved", "Medication record added. This script does not calculate or recommend doses.");
 }
 
@@ -123,46 +134,42 @@ async function logBottle() {
   const notes = await askText("Notes", "Optional", "");
   if (notes === null) return;
 
-  data.bottles.push({
+  addEvent({
     id: createId("bottle"),
-    fedAt: fedAt.toISOString(),
+    type: "bottle",
+    date: fedAt.toISOString(),
     amount: numericAmount,
     unit: unit.trim(),
     notes
   });
-  saveData();
   await showMessage("Saved", "Bottle-feeding record added.");
 }
 
 async function reviewToday() {
-  const feeds = data.feeds.filter((record) => isToday(record.startedAt)).sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
-  const bottles = data.bottles.filter((record) => isToday(record.fedAt)).sort((a, b) => new Date(a.fedAt) - new Date(b.fedAt));
-  const medications = data.medications.filter((record) => isToday(record.takenAt)).sort((a, b) => new Date(a.takenAt) - new Date(b.takenAt));
+  const feeds = data.filter((record) => record.type === "breastfeeding" && isToday(record.date)).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const bottles = data.filter((record) => record.type === "bottle" && isToday(record.date)).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const medications = data.filter((record) => record.type === "medication" && isToday(record.date)).sort((a, b) => new Date(a.date) - new Date(b.date));
   const lines = ["FEEDS"];
 
   if (!feeds.length && !bottles.length) lines.push("None");
   for (const feed of feeds) {
-    lines.push(`${formatTime(feed.startedAt)}  ${capitalize(feed.side)} · ${feed.durationMinutes} min`);
+    lines.push(`${formatTime(feed.date)}  ${capitalize(feed.side)} · ${feed.durationMinutes} min`);
   }
   for (const bottle of bottles) {
-    lines.push(`${formatTime(bottle.fedAt)}  Bottle · ${bottle.amount} ${bottle.unit}`);
+    lines.push(`${formatTime(bottle.date)}  Bottle · ${bottle.amount} ${bottle.unit}`);
   }
 
   lines.push("", "MEDICATIONS");
   if (!medications.length) lines.push("None");
   for (const medication of medications) {
-    lines.push(`${formatTime(medication.takenAt)}  ${medication.name} ${medication.dose} ${medication.unit}`.trim());
+    lines.push(`${formatTime(medication.date)}  ${medication.name} ${medication.dose} ${medication.unit}`.trim());
   }
 
   await showMessage("Today", lines.join("\n"));
 }
 
 async function manageRecentEntry() {
-  const records = [
-    ...data.feeds.map((record) => ({ type: "feed", record, date: record.startedAt })),
-    ...data.bottles.map((record) => ({ type: "bottle", record, date: record.fedAt })),
-    ...data.medications.map((record) => ({ type: "medication", record, date: record.takenAt }))
-  ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
+  const records = data.slice().sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
 
   if (!records.length) {
     await showMessage("No records", "There are no entries to manage.");
@@ -191,34 +198,14 @@ async function manageRecentEntry() {
   confirmation.addCancelAction("Keep");
   if (await confirmation.presentAlert() !== 0) return;
 
-  const collection = selected.type === "feed"
-    ? data.feeds
-    : selected.type === "bottle"
-      ? data.bottles
-      : data.medications;
-  const index = collection.findIndex((record) => record.id === selected.record.id);
-  if (index >= 0) collection.splice(index, 1);
-  saveData();
+  storage.appendEvent({
+    id: createId("deletion"),
+    type: "deletion",
+    targetId: selected.id,
+    date: new Date().toISOString()
+  });
+  data = data.filter((record) => record.id !== selected.id);
   await showMessage("Deleted", "The record was removed.");
-}
-
-function readData() {
-  if (!fm.fileExists(dataPath)) return { version: 1, feeds: [], medications: [] };
-  try {
-    const parsed = JSON.parse(fm.readString(dataPath));
-    return {
-      version: 1,
-      feeds: Array.isArray(parsed.feeds) ? parsed.feeds : [],
-      bottles: Array.isArray(parsed.bottles) ? parsed.bottles : [],
-      medications: Array.isArray(parsed.medications) ? parsed.medications : []
-    };
-  } catch (error) {
-    return { version: 1, feeds: [], bottles: [], medications: [] };
-  }
-}
-
-function saveData() {
-  fm.writeString(dataPath, JSON.stringify(data, null, 2));
 }
 
 async function askText(title, message, value) {
@@ -248,7 +235,12 @@ function parseDateInput(value) {
 }
 
 function createId(prefix) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return storage.createEventId(prefix);
+}
+
+function addEvent(event) {
+  storage.appendEvent(event);
+  data.push(event);
 }
 
 function isToday(value) {
@@ -262,13 +254,13 @@ function formatTime(value) {
 }
 
 function describeRecord(item) {
-  if (item.type === "feed") {
-    return `${formatTime(item.record.startedAt)} · Feed · ${capitalize(item.record.side)} · ${item.record.durationMinutes} min`;
+  if (item.type === "breastfeeding") {
+    return `${formatTime(item.date)} · Feed · ${capitalize(item.side)} · ${item.durationMinutes} min`;
   }
   if (item.type === "bottle") {
-    return `${formatTime(item.record.fedAt)} · Bottle · ${item.record.amount} ${item.record.unit}`;
+    return `${formatTime(item.date)} · Bottle · ${item.amount} ${item.unit}`;
   }
-  return `${formatTime(item.record.takenAt)} · ${item.record.name} · ${item.record.dose} ${item.record.unit}`.trim();
+  return `${formatTime(item.date)} · ${item.name} · ${item.dose} ${item.unit}`.trim();
 }
 
 function capitalize(value) {

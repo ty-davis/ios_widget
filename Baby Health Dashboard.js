@@ -1,70 +1,44 @@
 // Baby Health Dashboard
-// A local, app-like history view for records created by Baby Health Entry.js.
+// A shared, app-like history view for records created by Baby Health Entry.js.
 
-const DATA_FILE = "BabyHealthData.json";
-const fm = FileManager.local();
-const dataPath = fm.joinPath(fm.documentsDirectory(), DATA_FILE);
-const data = readData();
+const storage = importModule("Baby Health Storage");
 const webView = new WebView();
+let events = [];
+let setupError = null;
 
-await webView.loadHTML(renderHtml(normalizeRecords(data)));
+try {
+  await storage.migrateLegacyData();
+  events = await storage.loadEvents();
+} catch (error) {
+  setupError = error.message;
+}
+
+await webView.loadHTML(renderHtml(normalizeRecords(events), setupError));
 await webView.present(true);
 Script.complete();
 
-function readData() {
-  if (!fm.fileExists(dataPath)) {
-    return { version: 1, feeds: [], bottles: [], medications: [] };
-  }
-
-  try {
-    const parsed = JSON.parse(fm.readString(dataPath));
-    return {
-      version: 1,
-      feeds: Array.isArray(parsed.feeds) ? parsed.feeds : [],
-      bottles: Array.isArray(parsed.bottles) ? parsed.bottles : [],
-      medications: Array.isArray(parsed.medications) ? parsed.medications : []
-    };
-  } catch (error) {
-    return { version: 1, feeds: [], bottles: [], medications: [] };
-  }
-}
-
-function normalizeRecords(data) {
-  const records = [
-    ...(data.feeds || []).map((record) => ({
+function normalizeRecords(events) {
+  return events.map((record) => ({
       id: record.id,
-      type: "breastfeeding",
-      date: record.startedAt,
+      type: record.type,
+      date: record.date,
       side: record.side || "unknown",
       durationMinutes: Number(record.durationMinutes || 0),
-      notes: record.notes || ""
-    })),
-    ...(data.bottles || []).map((record) => ({
-      id: record.id,
-      type: "bottle",
-      date: record.fedAt,
       amount: Number(record.amount || 0),
       unit: record.unit || "",
-      notes: record.notes || ""
-    })),
-    ...(data.medications || []).map((record) => ({
-      id: record.id,
-      type: "medication",
-      date: record.takenAt,
       name: record.name || "Medication",
       dose: record.dose || "",
-      unit: record.unit || "",
       notes: record.notes || ""
     }))
-  ];
-
-  return records
     .filter((record) => record.date && !Number.isNaN(new Date(record.date).getTime()))
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 }
 
-function renderHtml(records) {
+function renderHtml(records, setupError) {
   const serializedRecords = JSON.stringify(records).replace(/</g, "\\u003c");
+  const setupBanner = setupError
+    ? '<div class="setup-error"><strong>Shared folder setup needed</strong><br>' + escapeHtmlForHtml(setupError) + '<br><br>Open Scriptable settings and create the shared File Bookmark described in the README.</div>'
+    : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -101,6 +75,7 @@ function renderHtml(records) {
     h3 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
     .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
     .subtitle { color: var(--muted); margin-top: 5px; font-size: 14px; }
+    .setup-error { background: #3b2d1b; border: 1px solid #8d6b32; border-radius: var(--radius); padding: 15px; color: var(--yellow); line-height: 1.45; margin-bottom: 18px; font-size: 13px; }
     .entry-link {
       display: inline-block;
       padding: 10px 13px;
@@ -169,6 +144,8 @@ function renderHtml(records) {
       </div>
       <a class="entry-link" href="scriptable:///run?scriptName=Baby%20Health%20Entry">Log/manage event</a>
     </header>
+
+    ${setupBanner}
 
     <nav class="segmented" id="range-buttons">
       <button data-range="today" class="active">Today</button>
@@ -362,4 +339,8 @@ function renderHtml(records) {
   </script>
 </body>
 </html>`;
+}
+
+function escapeHtmlForHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }

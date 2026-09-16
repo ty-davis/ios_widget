@@ -1,6 +1,6 @@
 # Baby Health Scriptable Widget
 
-This project gives you a small, private baby-health logger that runs entirely inside the Scriptable app on an iPhone.
+This project gives you a small baby-health logger that runs inside the Scriptable app on an iPhone and can share records between two people through a shared iCloud Drive folder.
 
 It records:
 
@@ -8,11 +8,15 @@ It records:
 - Bottle feeds: amount, unit, time, and notes
 - Medications: name, dose, unit, time, and notes
 
-It includes a Home Screen widget, a quick-entry menu, and an app-like history dashboard.
+It includes a Home Screen widget, a quick-entry menu, an app-like history dashboard, and append-only shared storage designed to avoid two people overwriting one another's records.
 
 ## What You Are Installing
 
-There are three Scriptable scripts:
+There are four Scriptable scripts:
+
+### `Baby Health Storage`
+
+This is a shared helper script used by the other three scripts. It must be copied into Scriptable, but you do not run it directly.
 
 ### `Baby Health Widget`
 
@@ -46,7 +50,7 @@ This is the detailed, app-like view. It opens inside Scriptable and includes:
 - Medication history grouped by medication
 - A filterable event history
 
-The dashboard works offline. It does not load charts or data from the internet.
+The dashboard works without a network request to a web service. It does need iCloud Drive to synchronize the shared event files.
 
 ## Before You Start
 
@@ -54,7 +58,9 @@ You need:
 
 - An iPhone
 - The free Scriptable app installed from the App Store
-- The three `.js` files from this project
+- The four `.js` files from this project
+- iCloud Drive enabled on both iPhones
+- Permission for both people to access the same shared iCloud Drive folder
 
 You do not need:
 
@@ -62,7 +68,7 @@ You do not need:
 - A server
 - A database account
 - Programming experience
-- An internet connection after the scripts have been copied to your phone
+- A Google account, server, or database account
 
 ## Install Scriptable
 
@@ -118,7 +124,78 @@ The simplest method is copy and paste. You can do this from a computer, or from 
 
 5. Paste the code and return to the script list.
 
-The names must match exactly. The widget uses the script name to know what to open when tapped.
+### Copy the storage script
+
+1. Open `Baby Health Storage.js` on your computer.
+2. Select all of the text and copy it.
+3. In Scriptable, create one more new script.
+4. Name it exactly:
+
+   ```text
+   Baby Health Storage
+   ```
+
+5. Paste the code and return to the script list.
+
+The names must match exactly. The other scripts import the storage helper by name, and the widget uses the dashboard name to know what to open when tapped.
+
+## Configure the Shared iCloud Folder
+
+This setup must be completed on both iPhones.
+
+### Create and share the folder
+
+1. Open the `Files` app on the iPhone of the person who will create the shared folder.
+2. Tap `Browse`.
+3. Open `iCloud Drive`.
+4. Create a new folder named:
+
+   ```text
+   Baby Health Shared
+   ```
+
+5. Touch and hold the folder.
+6. Choose `Share`.
+7. Invite the other person using their Apple Account, Messages, or Mail.
+8. Give the other person permission to make changes.
+9. On the second iPhone, accept the folder invitation and confirm that the folder appears in `iCloud Drive`.
+
+### Create the Scriptable File Bookmark
+
+Scriptable needs a bookmark so its scripts can access the shared folder.
+
+Complete these steps on each iPhone:
+
+1. Open Scriptable.
+2. Open Scriptable's settings. Depending on the Scriptable version, this may be the gear icon or the settings option in the script list.
+3. Find `File Bookmarks`.
+4. Add a bookmark for the shared `Baby Health Shared` folder.
+5. Name the bookmark exactly:
+
+   ```text
+   Baby Health Shared
+   ```
+
+6. Save the bookmark.
+
+The bookmark name and the folder name are intentionally the same, but they are separate things. The scripts use the bookmark name. The bookmark can point to the shared folder wherever it appears in the Files app.
+
+If Scriptable's file bookmark picker does not show the shared folder, open it in the Files app first, accept the sharing invitation, and try again.
+
+### Test the shared folder
+
+1. Run `Baby Health Entry` on the first iPhone.
+2. Choose `Log breastfeeding` and save a test record.
+3. Wait for iCloud to synchronize.
+4. Run `Baby Health Dashboard` on the second iPhone.
+5. Confirm that the test record appears.
+6. Delete the test record from `Manage recent entry` if it was only for testing.
+
+The scripts create this subfolder automatically inside the shared folder:
+
+```text
+Baby Health Shared/BabyHealthEvents/
+```
 
 ## Create Your First Record
 
@@ -136,7 +213,7 @@ The names must match exactly. The widget uses the script name to know what to op
 7. Add a note, or leave it blank.
 8. Tap `Save` on each prompt.
 
-The first saved record creates the local data file automatically.
+The first saved record creates an event file in the shared folder automatically.
 
 ## Add Bottle or Medication Records
 
@@ -176,7 +253,7 @@ Medication details are recorded and displayed exactly as entered. The scripts do
 9. Set `Script` to `Baby Health Widget`.
 10. Close the edit screen.
 
-The widget should now show the latest feed. iOS controls exactly when widgets refresh, so a newly saved record may not appear immediately. Opening the widget or waiting for the next refresh will update it.
+The widget should now show the latest feed. iOS controls exactly when widgets refresh, and iCloud may also need time to synchronize, so a newly saved record may not appear immediately. Opening the widget or waiting for the next refresh will update it.
 
 ## Open the Dashboard
 
@@ -187,7 +264,7 @@ The dashboard starts on `Today`. At the top, choose:
 - `Today` for records from the current calendar day
 - `7 days` for the current day and six previous days
 - `30 days` for the current day and 29 previous days
-- `All time` for every record in the local data file
+- `All time` for every synchronized event file
 
 The `History` section can be filtered by:
 
@@ -196,21 +273,36 @@ The `History` section can be filtered by:
 - Bottle
 - Medication
 
-The `Log event` button in the dashboard opens the entry script. If that button does not work, use `Baby Health Entry` directly from the Scriptable script list.
+The `Log/manage event` button in the dashboard opens the entry script. If that button does not work, use `Baby Health Entry` directly from the Scriptable script list.
 
 ## Where the Data Is Stored
 
-The scripts use Scriptable's local file storage through `FileManager.local()`.
+The shared scripts use a Scriptable File Bookmark and `FileManager.iCloud()` to access the shared folder. They do not send records to Google, a web server, or an external database.
 
-The shared file is named:
+Each event is stored as its own JSON file:
 
 ```text
-BabyHealthData.json
+Baby Health Shared/BabyHealthEvents/<event-id>.json
 ```
 
-It belongs to Scriptable's local Documents directory on that iPhone. The scripts do not send it to Google, a web server, or an external database.
+For example:
 
-This also means the data does not automatically sync to another iPhone or iPad.
+```text
+Baby Health Shared/BabyHealthEvents/feed-1726491234567-ab12cd34.json
+Baby Health Shared/BabyHealthEvents/bottle-1726494567890-ef56gh78.json
+```
+
+The scripts never rewrite a single shared master database file. This is important because two people can log events at nearly the same time without one person's write replacing the other's write.
+
+Deleting an event also does not remove the original event file. It creates a small deletion record that tells the dashboard to hide the original. This keeps the shared event history append-only and avoids delete/write races.
+
+## Existing Local Data
+
+Earlier versions used a local file named `BabyHealthData.json`. After the shared bookmark is configured, the scripts automatically migrate records from that file into individual shared event files.
+
+Migration is deduplicated by event ID. Running the scripts again will not intentionally create duplicate copies of the same legacy record.
+
+Keep the old local file until you have confirmed that all records appear on both phones. It is not deleted automatically.
 
 ## Updating a Script
 
@@ -223,7 +315,7 @@ If a later version of one of the scripts is provided:
 
 Do not create a second script with a slightly different name unless you also update the widget URL. The widget expects the exact script names listed above.
 
-Updating a script does not intentionally delete `BabyHealthData.json`. Still, avoid deleting the data file unless you want to erase the records.
+Updating a script does not intentionally delete any event files. Do not delete the `BabyHealthEvents` folder unless you want to erase the shared records.
 
 ## Troubleshooting
 
@@ -243,13 +335,23 @@ Open `Baby Health Widget` directly in Scriptable and run it once. Then check tha
 
 ### The dashboard has no records
 
-Make sure the entry script and dashboard script are both using the same Scriptable app. Create one test record through `Baby Health Entry`, then reopen the dashboard.
+Make sure both phones have a File Bookmark named exactly `Baby Health Shared`, and that both bookmarks point to the same shared folder. Create one test record through `Baby Health Entry`, wait for iCloud synchronization, then reopen the dashboard.
+
+### The script says the shared folder is not set up
+
+Open Scriptable settings and create a File Bookmark named exactly:
+
+```text
+Baby Health Shared
+```
+
+The bookmark must point to the shared folder in iCloud Drive. The scripts cannot use an ordinary text path in place of a File Bookmark.
 
 ### New records do not appear immediately
 
-This is normal for iOS widgets. iOS decides when a widget refreshes. Running the widget script manually from Scriptable can help confirm that the data is present.
+This is normal for iOS widgets and iCloud. iOS decides when a widget refreshes, and iCloud synchronization is not instantaneous. Running the widget or dashboard script manually from Scriptable can help confirm that the data is present.
 
-### The dashboard link to `Log event` does not work
+### The dashboard link to `Log/manage event` does not work
 
 Open `Baby Health Entry` directly from Scriptable. The dashboard still works as a history view even if the link behavior is restricted by the Scriptable version or iOS.
 
