@@ -12,8 +12,9 @@ Script.complete();
 async function mainMenu() {
   const alert = new Alert();
   alert.title = "Baby health";
-  alert.message = `${data.feeds.length} feeds · ${data.medications.length} medications recorded`;
+  alert.message = `${data.feeds.length} breastfeeds · ${data.bottles.length} bottles · ${data.medications.length} medications recorded`;
   alert.addAction("Log breastfeeding");
+  alert.addAction("Log bottle feeding");
   alert.addAction("Log medication");
   alert.addAction("Review today");
   alert.addAction("Manage recent entry");
@@ -21,9 +22,10 @@ async function mainMenu() {
 
   const choice = await alert.presentSheet();
   if (choice === 0) await logFeed();
-  if (choice === 1) await logMedication();
-  if (choice === 2) await reviewToday();
-  if (choice === 3) await manageRecentEntry();
+  if (choice === 1) await logBottle();
+  if (choice === 2) await logMedication();
+  if (choice === 3) await reviewToday();
+  if (choice === 4) await manageRecentEntry();
 }
 
 async function logFeed() {
@@ -98,14 +100,52 @@ async function logMedication() {
   await showMessage("Saved", "Medication record added. This script does not calculate or recommend doses.");
 }
 
+async function logBottle() {
+  const amount = await askText("Bottle amount", "Enter a number, for example 120", "");
+  if (amount === null) return;
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount < 0) {
+    await showMessage("Invalid amount", "Enter a positive number for the amount.");
+    return;
+  }
+
+  const unit = await askText("Bottle unit", "For example mL or oz", "mL");
+  if (unit === null || !unit.trim()) return;
+
+  const time = await askText("When was it fed?", "Use YYYY-MM-DD HH:mm or `now`", "now");
+  if (time === null) return;
+  const fedAt = parseDateInput(time);
+  if (!fedAt) {
+    await showMessage("Invalid time", "Use `now` or a date like 2026-09-16 14:30.");
+    return;
+  }
+
+  const notes = await askText("Notes", "Optional", "");
+  if (notes === null) return;
+
+  data.bottles.push({
+    id: createId("bottle"),
+    fedAt: fedAt.toISOString(),
+    amount: numericAmount,
+    unit: unit.trim(),
+    notes
+  });
+  saveData();
+  await showMessage("Saved", "Bottle-feeding record added.");
+}
+
 async function reviewToday() {
   const feeds = data.feeds.filter((record) => isToday(record.startedAt)).sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+  const bottles = data.bottles.filter((record) => isToday(record.fedAt)).sort((a, b) => new Date(a.fedAt) - new Date(b.fedAt));
   const medications = data.medications.filter((record) => isToday(record.takenAt)).sort((a, b) => new Date(a.takenAt) - new Date(b.takenAt));
   const lines = ["FEEDS"];
 
-  if (!feeds.length) lines.push("None");
+  if (!feeds.length && !bottles.length) lines.push("None");
   for (const feed of feeds) {
     lines.push(`${formatTime(feed.startedAt)}  ${capitalize(feed.side)} · ${feed.durationMinutes} min`);
+  }
+  for (const bottle of bottles) {
+    lines.push(`${formatTime(bottle.fedAt)}  Bottle · ${bottle.amount} ${bottle.unit}`);
   }
 
   lines.push("", "MEDICATIONS");
@@ -120,6 +160,7 @@ async function reviewToday() {
 async function manageRecentEntry() {
   const records = [
     ...data.feeds.map((record) => ({ type: "feed", record, date: record.startedAt })),
+    ...data.bottles.map((record) => ({ type: "bottle", record, date: record.fedAt })),
     ...data.medications.map((record) => ({ type: "medication", record, date: record.takenAt }))
   ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
 
@@ -150,7 +191,11 @@ async function manageRecentEntry() {
   confirmation.addCancelAction("Keep");
   if (await confirmation.presentAlert() !== 0) return;
 
-  const collection = selected.type === "feed" ? data.feeds : data.medications;
+  const collection = selected.type === "feed"
+    ? data.feeds
+    : selected.type === "bottle"
+      ? data.bottles
+      : data.medications;
   const index = collection.findIndex((record) => record.id === selected.record.id);
   if (index >= 0) collection.splice(index, 1);
   saveData();
@@ -164,10 +209,11 @@ function readData() {
     return {
       version: 1,
       feeds: Array.isArray(parsed.feeds) ? parsed.feeds : [],
+      bottles: Array.isArray(parsed.bottles) ? parsed.bottles : [],
       medications: Array.isArray(parsed.medications) ? parsed.medications : []
     };
   } catch (error) {
-    return { version: 1, feeds: [], medications: [] };
+    return { version: 1, feeds: [], bottles: [], medications: [] };
   }
 }
 
@@ -218,6 +264,9 @@ function formatTime(value) {
 function describeRecord(item) {
   if (item.type === "feed") {
     return `${formatTime(item.record.startedAt)} · Feed · ${capitalize(item.record.side)} · ${item.record.durationMinutes} min`;
+  }
+  if (item.type === "bottle") {
+    return `${formatTime(item.record.fedAt)} · Bottle · ${item.record.amount} ${item.record.unit}`;
   }
   return `${formatTime(item.record.takenAt)} · ${item.record.name} · ${item.record.dose} ${item.record.unit}`.trim();
 }
